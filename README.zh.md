@@ -108,7 +108,7 @@ npm install -g @larksuite/cli
 > Skills 是告诉 AI Agent 有哪些命令可用及如何调用的指令文件，是 Agent 使用 lark-cli 的前提。
 
 ```bash
-npx skills add larksuite/cli --all -y
+npx skills add larksuite/cli -y -g
 ```
 
 **第 3 步 — 配置应用凭证**

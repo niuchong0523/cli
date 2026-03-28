@@ -108,7 +108,7 @@ npm install -g @larksuite/cli
 > Skills are the instruction files that tell the AI Agent what commands are available and how to call them. This step is essential for the Agent to work with lark-cli.
 
 ```bash
-npx skills add larksuite/cli --all -y
+npx skills add larksuite/cli -y -g
 ```
 
 **Step 3 — Configure app credentials**
