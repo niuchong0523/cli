@@ -22,6 +22,7 @@ Thumbs.db
 # Go
 docs/ref
 docs/
+.worktrees/
 vendor/
 
 
