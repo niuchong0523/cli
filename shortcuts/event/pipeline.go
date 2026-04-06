@@ -41,10 +41,10 @@ func NewEventPipeline(
 	config PipelineConfig,
 	out, errOut io.Writer,
 ) *EventPipeline {
-	return NewEventPipelineWithWriter(registry, filters, config, out, errOut, nil)
+	return newEventPipeline(registry, filters, config, out, errOut, nil)
 }
 
-func NewEventPipelineWithWriter(
+func newEventPipeline(
 	registry *HandlerRegistry,
 	filters *FilterChain,
 	config PipelineConfig,

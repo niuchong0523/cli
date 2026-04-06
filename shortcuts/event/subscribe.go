@@ -182,19 +182,28 @@ var EventSubscribe = common.Shortcut{
 		filters := NewFilterChain(filterList...)
 
 		_ = jsonFlag
-		router, err := ParseRoutes(routeSpecs)
-		if err != nil {
-			return output.ErrValidation("invalid --route: %v", err)
-		}
-		recordWriter := NewOutputRouter(router, outputDir, ndjsonRecordWriter{w: out})
 		hasRoutes := len(routeSpecs) > 0
+		var recordWriter OutputRecordWriter
+		if hasRoutes || outputDir != "" {
+			router, err := ParseRoutes(routeSpecs)
+			if err != nil {
+				return output.ErrValidation("invalid --route: %v", err)
+			}
+			recordWriter = &outputRouter{
+				router:     router,
+				defaultDir: outputDir,
+				fallback:   ndjsonRecordWriter{w: out},
+				seq:        new(uint64),
+				writers:    map[string]*dirRecordWriter{},
+			}
+		}
 
 		// --- Build pipeline ---
 		mode := TransformRaw
 		if compactFlag {
 			mode = TransformCompact
 		}
-		pipeline := NewEventPipelineWithWriter(NewBuiltinHandlerRegistry(), filters, PipelineConfig{
+		pipeline := newEventPipeline(NewBuiltinHandlerRegistry(), filters, PipelineConfig{
 			Mode:  mode,
 			Quiet: quietFlag,
 		}, out, errOut, recordWriter)
