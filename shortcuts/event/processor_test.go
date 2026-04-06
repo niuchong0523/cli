@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -246,7 +247,7 @@ func TestPipeline_NormalizesAndDispatchesEventHandler(t *testing.T) {
 	registry := makeTestRegistry(handler, nil)
 	filters := NewFilterChain()
 	var out, errOut bytes.Buffer
-	p := NewEventPipeline(registry, filters, PipelineConfig{}, &out, &errOut)
+	p := NewEventPipeline(registry, filters, PipelineConfig{Mode: TransformCompact}, &out, &errOut)
 
 	p.Process(context.Background(), makeInboundEnvelope("im.message.receive_v1", `{"message":{"id":"1"}}`))
 
@@ -430,6 +431,60 @@ func TestPipeline_RawModeWritesEventRecord(t *testing.T) {
 	}
 	if _, exists := record["content"]; exists {
 		t.Fatalf("content should be absent in raw mode: %v", record["content"])
+	}
+}
+
+func TestPipeline_RawModeCanWriteViaOutputRouter(t *testing.T) {
+	tmpDir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(cwd)
+	}()
+	router, err := ParseRoutes([]string{"^im\\.message=dir:./im"})
+	if err != nil {
+		t.Fatalf("ParseRoutes() error = %v", err)
+	}
+	fallbackDir := filepath.Join(tmpDir, "default")
+	var out, errOut bytes.Buffer
+	registry := NewHandlerRegistry()
+	if err := registry.RegisterEventHandler(handlerFuncWith{id: genericHandlerID, eventType: "im.message.receive_v1", fn: func(_ context.Context, evt *Event) HandlerResult {
+		return HandlerResult{Status: HandlerStatusHandled}
+	}}); err != nil {
+		t.Fatalf("RegisterEventHandler() error = %v", err)
+	}
+	p := NewEventPipelineWithWriter(registry, NewFilterChain(), PipelineConfig{Mode: TransformRaw}, &out, &errOut, NewOutputRouter(router, fallbackDir, ndjsonRecordWriter{w: &out}))
+
+	p.Process(context.Background(), makeInboundEnvelope("im.message.receive_v1", `{"message":{"message_id":"om_123"}}`))
+
+	if out.Len() != 0 {
+		t.Fatalf("stdout output = %q, want empty when routed to files", out.String())
+	}
+	entries, err := os.ReadDir(filepath.Join(tmpDir, "im"))
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("routed files = %d, want 1", len(entries))
+	}
+	data, err := os.ReadFile(filepath.Join(tmpDir, "im", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var record map[string]interface{}
+	if err := json.Unmarshal(bytes.TrimSpace(data), &record); err != nil {
+		t.Fatalf("invalid routed JSON: %v", err)
+	}
+	if got, want := record["event_type"], "im.message.receive_v1"; got != want {
+		t.Fatalf("event_type = %v, want %v", got, want)
+	}
+	if _, err := os.Stat(fallbackDir); !os.IsNotExist(err) {
+		t.Fatalf("fallback dir stat err = %v, want not exists", err)
 	}
 }
 

@@ -181,7 +181,12 @@ var EventSubscribe = common.Shortcut{
 		}
 		filters := NewFilterChain(filterList...)
 
-		_, _ = jsonFlag, outputDir
+		_ = jsonFlag
+		router, err := ParseRoutes(routeSpecs)
+		if err != nil {
+			return output.ErrValidation("invalid --route: %v", err)
+		}
+		recordWriter := NewOutputRouter(router, outputDir, ndjsonRecordWriter{w: out})
 		hasRoutes := len(routeSpecs) > 0
 
 		// --- Build pipeline ---
@@ -189,10 +194,10 @@ var EventSubscribe = common.Shortcut{
 		if compactFlag {
 			mode = TransformCompact
 		}
-		pipeline := NewEventPipeline(NewBuiltinHandlerRegistry(), filters, PipelineConfig{
+		pipeline := NewEventPipelineWithWriter(NewBuiltinHandlerRegistry(), filters, PipelineConfig{
 			Mode:  mode,
 			Quiet: quietFlag,
-		}, out, errOut)
+		}, out, errOut, recordWriter)
 
 		// --- Build SDK event dispatcher ---
 		rawHandler := func(ctx context.Context, event *larkevent.EventReq) error {
