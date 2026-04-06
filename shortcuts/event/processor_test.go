@@ -458,7 +458,7 @@ func TestPipeline_RawModeCanWriteViaOutputRouter(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("RegisterEventHandler() error = %v", err)
 	}
-	p := NewEventPipelineWithWriter(registry, NewFilterChain(), PipelineConfig{Mode: TransformRaw}, &out, &errOut, NewOutputRouter(router, fallbackDir, ndjsonRecordWriter{w: &out}))
+	p := newEventPipeline(registry, NewFilterChain(), PipelineConfig{Mode: TransformRaw}, &out, &errOut, &outputRouter{router: router, defaultDir: fallbackDir, fallback: ndjsonRecordWriter{w: &out}, seq: new(uint64), writers: map[string]*dirRecordWriter{}})
 
 	p.Process(context.Background(), makeInboundEnvelope("im.message.receive_v1", `{"message":{"message_id":"om_123"}}`))
 

@@ -79,21 +79,6 @@ func (r *EventRouter) Match(eventType string) []string {
 	return dirs
 }
 
-// NewOutputRouter returns a writer that routes serialized records to matching directories.
-// Unmatched records fall through to defaultDir when provided, otherwise to fallback.
-func NewOutputRouter(router *EventRouter, defaultDir string, fallback OutputRecordWriter) OutputRecordWriter {
-	if router == nil && defaultDir == "" {
-		return fallback
-	}
-	return &outputRouter{
-		router:     router,
-		defaultDir: defaultDir,
-		fallback:   fallback,
-		seq:        new(uint64),
-		writers:    map[string]*dirRecordWriter{},
-	}
-}
-
 // OutputRecordWriter writes a fully serialized pipeline record.
 type OutputRecordWriter interface {
 	WriteRecord(eventType string, record map[string]interface{}) error
