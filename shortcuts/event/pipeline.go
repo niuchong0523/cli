@@ -23,14 +23,15 @@ type PipelineConfig struct {
 
 // EventPipeline chains normalize -> match -> resolve -> filter -> dedupe -> dispatch.
 type EventPipeline struct {
-	registry    *HandlerRegistry
-	filters     *FilterChain
-	config      PipelineConfig
-	deduper     *Deduper
-	dispatcher  *Dispatcher
-	dispatchedN int64
-	out         io.Writer
-	errOut      io.Writer
+	registry     *HandlerRegistry
+	filters      *FilterChain
+	config       PipelineConfig
+	deduper      *Deduper
+	dispatcher   *Dispatcher
+	dispatchedN  int64
+	out          io.Writer
+	errOut       io.Writer
+	recordWriter OutputRecordWriter
 }
 
 // NewEventPipeline builds an event processing pipeline.
@@ -40,17 +41,28 @@ func NewEventPipeline(
 	config PipelineConfig,
 	out, errOut io.Writer,
 ) *EventPipeline {
+	return NewEventPipelineWithWriter(registry, filters, config, out, errOut, nil)
+}
+
+func NewEventPipelineWithWriter(
+	registry *HandlerRegistry,
+	filters *FilterChain,
+	config PipelineConfig,
+	out, errOut io.Writer,
+	recordWriter OutputRecordWriter,
+) *EventPipeline {
 	if registry == nil {
 		registry = NewHandlerRegistry()
 	}
 	return &EventPipeline{
-		registry:   registry,
-		filters:    filters,
-		config:     config,
-		deduper:    NewDeduper(dedupTTL),
-		dispatcher: NewDispatcher(registry),
-		out:        out,
-		errOut:     errOut,
+		registry:     registry,
+		filters:      filters,
+		config:       config,
+		deduper:      NewDeduper(dedupTTL),
+		dispatcher:   NewDispatcher(registry),
+		out:          out,
+		errOut:       errOut,
+		recordWriter: recordWriter,
 	}
 }
 
@@ -103,7 +115,7 @@ func (p *EventPipeline) dispatch(ctx context.Context, evt *Event) {
 	for _, record := range result.Results {
 		p.dispatchedN++
 		var entry map[string]interface{}
-		if p.config.Mode == TransformRaw {
+		if p.config.Mode == TransformRaw && p.recordWriter != nil {
 			entry = rawModeRecord(evt, record)
 			if len(evt.Metadata) > 0 {
 				entry["metadata"] = evt.Metadata
@@ -111,6 +123,14 @@ func (p *EventPipeline) dispatch(ctx context.Context, evt *Event) {
 			if reason := summarizeDispatchReason(result); reason != "" {
 				entry["reason"] = reason
 			}
+			if err := p.recordWriter.WriteRecord(evt.EventType, entry); err != nil {
+				output.PrintError(p.errOut, fmt.Sprintf("write failed: %v", err))
+				return
+			}
+			continue
+		}
+		if p.config.Mode == TransformRaw {
+			entry = rawModeRecord(evt, record)
 		} else {
 			entry = compactModeRecord(evt, record)
 		}
@@ -160,6 +180,12 @@ func rawModeRecord(evt *Event, record DispatchRecord) map[string]interface{} {
 	}
 	if evt.EventID != "" {
 		entry["event_id"] = evt.EventID
+	}
+	if record.Reason != "" {
+		entry["reason"] = record.Reason
+	}
+	if record.Err != nil {
+		entry["error"] = record.Err.Error()
 	}
 	return entry
 }
@@ -217,6 +243,14 @@ func summarizeDispatchReason(result DispatchResult) string {
 		}
 	}
 	return reason
+}
+
+type ndjsonRecordWriter struct {
+	w io.Writer
+}
+
+func (w ndjsonRecordWriter) WriteRecord(_ string, value map[string]interface{}) error {
+	return writeNDJSON(w.w, value)
 }
 
 func writeNDJSON(w io.Writer, value interface{}) error {
