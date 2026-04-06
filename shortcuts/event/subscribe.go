@@ -5,7 +5,6 @@ package event
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -50,8 +49,10 @@ func (l *stderrLogger) Error(_ context.Context, args ...interface{}) {
 
 var _ larkcore.Logger = (*stderrLogger)(nil)
 
-// commonEventTypes are well-known event types registered in catch-all mode.
-var commonEventTypes = []string{
+// subscribedEventTypes are the event types wired into the SDK dispatcher.
+// Keep this list aligned with NewBuiltinHandlerRegistry so catch-all mode only
+// registers event types that the builtin runtime can handle explicitly.
+var subscribedEventTypes = []string{
 	"im.message.receive_v1",
 	"im.message.message_read_v1",
 	"im.message.reaction.created_v1",
@@ -63,19 +64,14 @@ var commonEventTypes = []string{
 	"im.chat.member.user.deleted_v1",
 	"im.chat.updated_v1",
 	"im.chat.disbanded_v1",
-	"contact.user.created_v3",
-	"contact.user.updated_v3",
-	"contact.user.deleted_v3",
-	"contact.department.created_v3",
-	"contact.department.updated_v3",
-	"contact.department.deleted_v3",
-	"calendar.calendar.acl.created_v4",
-	"calendar.calendar.event.changed_v4",
-	"approval.approval.updated",
-	"application.application.visibility.added_v6",
-	"task.task.update_tenant_v1",
-	"task.task.comment_updated_v1",
-	"drive.notice.comment_add_v1",
+}
+
+func subscribedEventTypesFor(eventTypesStr string) []string {
+	filter := NewEventTypeFilter(eventTypesStr)
+	if filter == nil {
+		return nil
+	}
+	return filter.Types()
 }
 
 var EventSubscribe = common.Shortcut{
@@ -170,6 +166,7 @@ var EventSubscribe = common.Shortcut{
 		}
 
 		// --- Build filter chain ---
+		explicitTypes := subscribedEventTypesFor(eventTypesStr)
 		eventTypeFilter := NewEventTypeFilter(eventTypesStr)
 		regexFilter, err := NewRegexFilter(filterStr)
 		if err != nil {
@@ -184,40 +181,25 @@ var EventSubscribe = common.Shortcut{
 		}
 		filters := NewFilterChain(filterList...)
 
-		// --- Parse route ---
-		router, err := ParseRoutes(routeSpecs)
-		if err != nil {
-			return output.ErrValidation("invalid --route: %v", err)
-		}
+		_, _ = jsonFlag, outputDir
+		hasRoutes := len(routeSpecs) > 0
 
 		// --- Build pipeline ---
 		mode := TransformRaw
 		if compactFlag {
 			mode = TransformCompact
 		}
-		pipeline := NewEventPipeline(DefaultRegistry(), filters, PipelineConfig{
-			Mode:      mode,
-			JsonFlag:  jsonFlag,
-			OutputDir: outputDir,
-			Quiet:     quietFlag,
-			Router:    router,
+		pipeline := NewEventPipeline(NewBuiltinHandlerRegistry(), filters, PipelineConfig{
+			Mode:  mode,
+			Quiet: quietFlag,
 		}, out, errOut)
-
-		if err := pipeline.EnsureDirs(); err != nil {
-			return err
-		}
 
 		// --- Build SDK event dispatcher ---
 		rawHandler := func(ctx context.Context, event *larkevent.EventReq) error {
 			if event.Body == nil {
 				return nil
 			}
-			var raw RawEvent
-			if err := json.Unmarshal(event.Body, &raw); err != nil {
-				output.PrintError(errOut, fmt.Sprintf("failed to parse event: %v", err))
-				return nil
-			}
-			pipeline.Process(ctx, &raw)
+			pipeline.Process(ctx, BuildWebSocketEnvelope(event.Body))
 			return nil
 		}
 
@@ -225,12 +207,12 @@ var EventSubscribe = common.Shortcut{
 
 		eventDispatcher := dispatcher.NewEventDispatcher("", "")
 		eventDispatcher.InitConfig(larkevent.WithLogger(sdkLogger))
-		if eventTypeFilter != nil {
-			for _, et := range eventTypeFilter.Types() {
+		if explicitTypes != nil {
+			for _, et := range explicitTypes {
 				eventDispatcher.OnCustomizedEvent(et, rawHandler)
 			}
 		} else {
-			for _, et := range commonEventTypes {
+			for _, et := range subscribedEventTypes {
 				eventDispatcher.OnCustomizedEvent(et, rawHandler)
 			}
 		}
@@ -242,16 +224,16 @@ var EventSubscribe = common.Shortcut{
 		}
 
 		info(fmt.Sprintf("%sConnecting to Lark event WebSocket...%s", output.Cyan, output.Reset))
-		if eventTypeFilter != nil {
-			info(fmt.Sprintf("Listening for: %s%s%s", output.Green, strings.Join(eventTypeFilter.Types(), ", "), output.Reset))
+		if explicitTypes != nil {
+			info(fmt.Sprintf("Listening for: %s%s%s", output.Green, strings.Join(explicitTypes, ", "), output.Reset))
 		} else {
-			info(fmt.Sprintf("Listening for %s%d common event types%s (catch-all mode)", output.Green, len(commonEventTypes), output.Reset))
-			info(fmt.Sprintf("%sTip:%s use --event-types to listen for specific event types", output.Dim, output.Reset))
+			info(fmt.Sprintf("Listening in %scatch-all%s mode for all runtime-supported delivered event types", output.Green, output.Reset))
+			info(fmt.Sprintf("%sTip:%s use --event-types to narrow subscription", output.Dim, output.Reset))
 		}
 		if regexFilter != nil {
 			info(fmt.Sprintf("Filter: %s%s%s", output.Yellow, regexFilter.String(), output.Reset))
 		}
-		if router != nil {
+		if hasRoutes {
 			for _, spec := range routeSpecs {
 				info(fmt.Sprintf("  Route: %s%s%s", output.Green, spec, output.Reset))
 			}
