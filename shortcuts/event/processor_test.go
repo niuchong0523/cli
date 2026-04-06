@@ -504,6 +504,40 @@ func TestPipeline_MalformedEventUsesFallback(t *testing.T) {
 	}
 }
 
+func TestPipeline_RawModeMalformedEventPreservesRawPayload(t *testing.T) {
+	var out, errOut bytes.Buffer
+	registry := NewHandlerRegistry()
+	if err := registry.SetFallbackHandler(handlerFuncWith{
+		id: "fallback",
+		fn: func(_ context.Context, evt *Event) HandlerResult {
+			return HandlerResult{Status: HandlerStatusHandled}
+		},
+	}); err != nil {
+		t.Fatalf("SetFallbackHandler() error = %v", err)
+	}
+
+	p := NewEventPipeline(registry, NewFilterChain(), PipelineConfig{Mode: TransformRaw}, &out, &errOut)
+	p.Process(context.Background(), InboundEnvelope{
+		Source:     SourceWebhook,
+		ReceivedAt: time.Unix(1700000001, 0).UTC(),
+		RawPayload: []byte("not-json"),
+	})
+
+	var record map[string]interface{}
+	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &record); err != nil {
+		t.Fatalf("invalid raw-mode malformed output: %v", err)
+	}
+	if record["event_type"] != "malformed" {
+		t.Fatalf("event_type = %v", record["event_type"])
+	}
+	if record["raw_payload"] != "not-json" {
+		t.Fatalf("raw_payload = %v", record["raw_payload"])
+	}
+	if record["status"] != "handled" {
+		t.Fatalf("status = %v", record["status"])
+	}
+}
+
 // --- Pipeline: Quiet ---
 
 func TestPipeline_Quiet(t *testing.T) {

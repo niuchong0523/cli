@@ -103,8 +103,14 @@ func (p *EventPipeline) dispatch(ctx context.Context, evt *Event) {
 	for _, record := range result.Results {
 		p.dispatchedN++
 		var entry map[string]interface{}
-		if p.config.Mode == TransformRaw && record.HandlerID == genericHandlerID {
+		if p.config.Mode == TransformRaw {
 			entry = rawModeRecord(evt, record)
+			if len(evt.Metadata) > 0 {
+				entry["metadata"] = evt.Metadata
+			}
+			if reason := summarizeDispatchReason(result); reason != "" {
+				entry["reason"] = reason
+			}
 		} else {
 			entry = compactModeRecord(evt, record)
 		}
@@ -195,6 +201,22 @@ func mergeHandlerOutput(entry map[string]interface{}, outputValue interface{}) {
 		return
 	}
 	entry["output"] = outputValue
+}
+
+func summarizeDispatchReason(result DispatchResult) string {
+	if len(result.Results) == 0 {
+		return ""
+	}
+	reason := result.Results[0].Reason
+	if reason == "" {
+		return ""
+	}
+	for _, record := range result.Results[1:] {
+		if record.Reason != reason {
+			return ""
+		}
+	}
+	return reason
 }
 
 func writeNDJSON(w io.Writer, value interface{}) error {
